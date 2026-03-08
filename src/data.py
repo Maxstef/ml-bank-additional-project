@@ -46,7 +46,8 @@ def split_numeric_categorical(df, target_col="y"):
     """
     # Numeric columns
     numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    numeric_cols.append(target_col)  # include target
+    if target_col not in numeric_cols:  # include target if not there
+        numeric_cols.append(target_col)
     numeric_df = df[numeric_cols].copy()
 
     # Convert target to 0/1
@@ -57,7 +58,8 @@ def split_numeric_categorical(df, target_col="y"):
 
     # Categorical columns
     categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-    categorical_cols.append(target_col)
+    if target_col not in categorical_cols:  # include target if not there
+        categorical_cols.append(target_col)
     categorical_df = df[categorical_cols].copy()
 
     # Convert target to 0/1 as well
