@@ -1,6 +1,8 @@
 from pathlib import Path
 import pandas as pd
+from sklearn.model_selection import train_test_split
 import zipfile
+from typing import Optional, Tuple
 
 from src.config import DATA_RAW
 
@@ -76,3 +78,42 @@ def split_numeric_categorical(df, target_col="y"):
         "numeric_cols": numeric_cols,
         "categorical_cols": categorical_cols,
     }
+
+
+def split_train_val(
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    stratify_col: Optional[str] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split a DataFrame into train and validation sets.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The full dataset to split.
+    test_size : float, default=0.2
+        Fraction of data to use as validation set.
+    random_state : int, default=42
+        Random seed for reproducibility.
+    stratify_col : str or None, default=None
+        Column name to stratify on (useful for classification).
+
+    Returns
+    -------
+    train_df : pd.DataFrame
+        Training set.
+    val_df : pd.DataFrame
+        Validation set.
+    """
+
+    if stratify_col is not None:
+        stratify_vals = df[stratify_col]
+    else:
+        stratify_vals = None
+
+    train_df, val_df = train_test_split(
+        df, test_size=test_size, random_state=random_state, stratify=stratify_vals
+    )
+    return train_df, val_df
