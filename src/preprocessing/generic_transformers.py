@@ -140,12 +140,17 @@ class ConditionalMapper(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         if self.column not in X.columns:
             raise ValueError(f"{self.column} not found in DataFrame")
+
+        # infer dtype from rule values
+        values = [value for _, value in self.rules]
+        self.dtype_ = np.array(values).dtype
+
         return self
 
     def transform(self, X):
         X = X.copy()
 
-        result = np.full(len(X), None)
+        result = np.empty(len(X), dtype=self.dtype_)
 
         for condition, value in self.rules:
             mask = condition(X[self.column])
@@ -153,6 +158,66 @@ class ConditionalMapper(BaseEstimator, TransformerMixin):
 
         X[self.new_column] = result
 
+        return X
+
+
+class MappingTransformer(BaseEstimator, TransformerMixin):
+    """
+    Map values from an existing column to a new column using a dictionary.
+
+    This transformer applies a simple dictionary mapping to the specified
+    column and stores the result in a new column. It is useful for converting
+    categorical values into numeric representations or grouping categories.
+
+    Parameters
+    ----------
+    column : str
+        Name of the input column to map.
+
+    mapping : dict
+        Dictionary defining the mapping from original values to new values.
+        Keys correspond to values in the input column and values correspond
+        to the mapped output values.
+
+    new_column : str
+        Name of the column to create with the mapped values.
+
+    Attributes
+    ----------
+    column_ : str
+        Validated input column name after fitting.
+
+    Examples
+    --------
+    >>> mapping = {"jan": 1, "feb": 2, "mar": 3}
+    >>> transformer = MappingTransformer(
+    ...     column="month",
+    ...     mapping=mapping,
+    ...     new_column="month_num"
+    ... )
+    >>> transformer.fit_transform(df)
+
+    Notes
+    -----
+    Values not present in the mapping dictionary will be mapped to NaN,
+    consistent with pandas `Series.map()` behavior.
+    """
+
+    def __init__(self, column, mapping, new_column):
+        self.column = column
+        self.mapping = mapping
+        self.new_column = new_column
+
+    def fit(self, X, y=None):
+        if self.column not in X.columns:
+            raise ValueError(f"{self.column} not found in DataFrame")
+
+        self.column_ = self.column
+        return self
+
+    def transform(self, X):
+        X = X.copy()
+        X[self.new_column] = X[self.column].map(self.mapping)
         return X
 
 
@@ -210,7 +275,7 @@ class CyclicalEncoder(BaseEstimator, TransformerMixin):
     Examples: month, day_of_week, hour, etc.
     """
 
-    def __init__(self, column, max_value=None):
+    def __init__(self, column, max_value=None, drop_original=False):
         """
         Parameters
         ----------
@@ -219,9 +284,12 @@ class CyclicalEncoder(BaseEstimator, TransformerMixin):
         max_value : int, optional
             Maximum possible value of the cycle (e.g., 12 for month, 7 for day_of_week).
             If None, will use X[column].max()
+        drop_original : bool, default False
+            Whether to drop the original column after encoding
         """
         self.column = column
         self.max_value = max_value
+        self.drop_original = drop_original
 
     def fit(self, X, y=None):
         if self.column not in X.columns:
@@ -234,9 +302,140 @@ class CyclicalEncoder(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         X = X.copy()
+        X[self.column] = pd.to_numeric(X[self.column], errors="coerce").fillna(0)
         # Scale column to 0 -> 2pi
         radians = 2 * np.pi * X[self.column] / self.max_value_
         X[f"{self.column}_sin"] = np.sin(radians)
         X[f"{self.column}_cos"] = np.cos(radians)
+
+        if self.drop_original:
+            X = X.drop(columns=[self.column])
+
         return X
 
+    def get_feature_names_out(self, input_features=None):
+        """
+        Return the names of the transformed features (sin and cos)
+        """
+        return [f"{self.column}_sin", f"{self.column}_cos"]
+
+
+class CategoricalEncoder(BaseEstimator, TransformerMixin):
+    """
+    One-hot encode categorical columns with options to:
+      - Drop specified categories
+      - Combine multiple categories into one
+    """
+
+    def __init__(self, columns, drop_categories=None, combine_categories=None):
+        """
+        Parameters
+        ----------
+        columns : list
+            List of categorical columns to encode
+        drop_categories : dict, optional
+            Dictionary {column_name: [categories_to_drop]}
+            Example: {'job': ['unknown'], 'education': ['illiterate']}
+        combine_categories : dict, optional
+            Dictionary {column_name: {new_category: [old_values]}}
+            Example: {'education': {'other': ['unknown', 'illiterate']}}
+        """
+        self.columns = columns
+        self.drop_categories = drop_categories or {}
+        self.combine_categories = combine_categories or {}
+        self.categories_ = {}
+
+    def fit(self, X, y=None):
+        X = X.copy()
+        for col in self.columns:
+            values = X[col].unique().tolist()
+
+            # Drop unwanted categories
+            if col in self.drop_categories:
+                values = [v for v in values if v not in self.drop_categories[col]]
+
+            # Combine categories: replace old values with new merged key
+            if col in self.combine_categories:
+                for new_cat, old_vals in self.combine_categories[col].items():
+                    for old_val in old_vals:
+                        if old_val in values:
+                            values.remove(old_val)
+                    values.append(new_cat)
+
+            self.categories_[col] = sorted(values)
+
+        return self
+
+    def transform(self, X):
+        X = X.copy()
+        for col in self.columns:
+            # Apply category combination first
+            if col in self.combine_categories:
+                for new_cat, old_vals in self.combine_categories[col].items():
+                    X[col] = X[col].replace(old_vals, new_cat)
+
+            # Drop unwanted categories
+            if col in self.drop_categories:
+                X[col] = X[col].where(~X[col].isin(self.drop_categories[col]))
+
+            # One-hot encode
+            allowed_values = self.categories_[col]
+            for val in allowed_values:
+                X[f"{col}_{val}"] = (X[col] == val).astype(int)
+
+            # Drop original column
+            X = X.drop(columns=[col])
+
+        return X
+
+    def get_feature_names_out(self, input_features=None):
+        """
+        Returns the output feature names after one-hot encoding
+        """
+        feature_names = []
+        for col in self.columns:
+            if col in self.categories_:
+                feature_names.extend([f"{col}_{val}" for val in self.categories_[col]])
+        return np.array(feature_names)
+
+
+class AutoCategoricalEncoder(BaseEstimator, TransformerMixin):
+    def __init__(self, drop_categories=None, combine_categories=None):
+        self.drop_categories = drop_categories or {}
+        self.combine_categories = combine_categories or {}
+
+    def fit(self, X, y=None):
+        # Select all object columns at this stage
+        self.columns_ = X.select_dtypes(include="object").columns.tolist()
+
+        # Initialize the actual encoder
+        self.encoder_ = CategoricalEncoder(
+            columns=self.columns_,
+            drop_categories=self.drop_categories,
+            combine_categories=self.combine_categories,
+        )
+        self.encoder_.fit(X, y)
+        return self
+
+    def transform(self, X):
+        return self.encoder_.transform(X)
+
+    def get_feature_names_out(self, input_features=None):
+        """
+        Return the list of feature names produced after encoding.
+        Works with sklearn's ColumnTransformer convention.
+        """
+        # Collect feature names from the encoder
+        if hasattr(self.encoder_, "get_feature_names_out"):
+            return self.encoder_.get_feature_names_out(input_features)
+
+        # If CategoricalEncoder doesn’t implement get_feature_names_out,
+        # fallback: return names for each one-hot column as "<col>_<category>"
+        feature_names = []
+        for col in self.columns_:
+            categories = self.encoder_.categories_[
+                col
+            ]  # assumed stored inside CategoricalEncoder
+            for cat in categories:
+                feature_names.append(f"{col}_{cat}")
+        return feature_names

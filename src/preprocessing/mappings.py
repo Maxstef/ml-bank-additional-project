@@ -14,5 +14,11 @@ month_map = {
     "dec": 12,
 }
 
+# Generate month_rules for ConditionalMapper
+month_rules = [(lambda x, k=k, v=v: x == k, int(v)) for k, v in month_map.items()]
+
 # For day_of_week
-dow_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4}
+dow_map = {"mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5}
+
+# Generate dow_rules for ConditionalMapper
+dow_rules = [(lambda x, v=v, k=k: x == k, int(v)) for k, v in dow_map.items()]
