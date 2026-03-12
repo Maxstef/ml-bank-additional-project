@@ -226,43 +226,53 @@ class NumericBinner(BaseEstimator, TransformerMixin):
     Transforms a numeric column into categorical bins based on specified thresholds.
     """
 
-    def __init__(self, column: str, bins: list, labels: list = None):
+    def __init__(
+        self, column: str, bins: list, labels: list = None, new_column: str = None
+    ):
         """
         Parameters
         ----------
         column : str
-            Column to transform
-        bins : list of numbers, optional
-            Bin edges (including min and max)
+            Column to transform.
+
+        bins : list of numbers
+            Bin edges (including min and max).
+
         labels : list of str, optional
-            Labels for bins. Must be one less than len(bins)
+            Labels for bins. Must be one less than len(bins).
+
+        new_column : str, optional
+            Name of the new column to create. If not provided,
+            the default name will be "{column}_group".
         """
         self.column = column
         self.bins = bins
         self.labels = labels
+        self.new_column = new_column
 
     def fit(self, X, y=None):
 
         if self.column not in X.columns:
             raise ValueError(f"Column '{self.column}' not found in DataFrame")
 
-        # Validate bins and labels
         if self.bins is None:
             raise ValueError("Bins must be provided")
 
         if self.labels is not None and len(self.labels) != len(self.bins) - 1:
             raise ValueError("Number of labels must be one less than number of bins")
 
-        # store validated parameters
         self.bins_ = self.bins
         self.labels_ = self.labels
+
+        # determine output column name
+        self.new_column_ = self.new_column or f"{self.column}_group"
 
         return self
 
     def transform(self, X):
         X = X.copy()
 
-        X[f"{self.column}_group"] = pd.cut(
+        X[self.new_column_] = pd.cut(
             X[self.column], bins=self.bins_, labels=self.labels_, include_lowest=True
         )
 
