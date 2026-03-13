@@ -13,6 +13,7 @@ class CampaignPrevTransformer(BaseEstimator, TransformerMixin):
         self.new_column = new_column
 
     def fit(self, X, y=None):
+        self.fitted_ = True
         if self.column not in X.columns:
             raise ValueError(f"Column '{self.column}' not found in DataFrame")
         return self
@@ -42,6 +43,7 @@ class PdaysTransformer(BaseEstimator, TransformerMixin):
         self.recent_days = recent_days
 
     def fit(self, X, y=None):
+        self.fitted_ = True
         if self.column not in X.columns:
             raise ValueError(f"Column '{self.column}' not found in DataFrame")
         return self

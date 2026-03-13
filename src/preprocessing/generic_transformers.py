@@ -99,6 +99,7 @@ class ColumnArithmetic(BaseEstimator, TransformerMixin):
         self.value = value
 
     def fit(self, X, y=None):
+        self.fitted_ = True
         if self.column not in X.columns:
             raise ValueError(f"Column '{self.column}' not found in DataFrame")
         return self
@@ -416,7 +417,7 @@ class AutoCategoricalEncoder(BaseEstimator, TransformerMixin):
 
     def fit(self, X, y=None):
         # Select all object columns at this stage
-        self.columns_ = X.select_dtypes(include="object").columns.tolist()
+        self.columns_ = X.select_dtypes(include=["object", "category"]).columns.tolist()
 
         # Initialize the actual encoder
         self.encoder_ = CategoricalEncoder(
