@@ -43,7 +43,7 @@ ml-bank-additional-project/
    cd ml-bank-additional-project
    ```
 
-2. **Create a virtual environment** (optional but recommended):
+2. **Create a virtual environment** (recommended python version - 3.11.11):
    ```bash
    python -m venv venv
    source venv/bin/activate   # on Windows `venv\Scripts\activate`
