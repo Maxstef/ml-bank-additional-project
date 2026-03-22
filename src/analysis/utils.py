@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import shap
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
 def get_model_and_subset(
@@ -182,3 +184,58 @@ def get_single_explanation(shap_values, pos, class_idx=1):
         return shap_values[pos, :, class_idx]
     else:
         return shap_values[pos]
+
+
+def plot_confusion_matrices(
+    y_true, predictions_dict, normalize=None, labels=["no", "yes"], figsize=(15, 4)
+):
+    """
+    Plot confusion matrices for multiple models.
+
+    Parameters
+    ----------
+    y_true : array-like
+        True labels.
+
+    predictions_dict : dict
+        Dictionary where:
+        key = model name (str)
+        value = predicted labels (array-like)
+
+        Example:
+        {
+            "rf": y_pred_rf,
+            "xgb": y_pred_xgb,
+            "lr": y_pred_lr
+        }
+
+    normalize : str or None
+        Normalization mode passed to sklearn.confusion_matrix.
+        Options: None, 'true', 'pred', 'all'
+
+    labels : list
+        Class labels order.
+
+    figsize : tuple
+        Figure size.
+    """
+
+    n_models = len(predictions_dict)
+    fig, axes = plt.subplots(1, n_models, figsize=figsize)
+
+    if n_models == 1:
+        axes = [axes]
+
+    for ax, (model_name, y_pred) in zip(axes, predictions_dict.items()):
+        cm = confusion_matrix(y_true, y_pred, normalize=normalize)
+
+        # print(model_name)
+        # print(cm)
+
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
+        disp.plot(ax=ax, values_format=".2f" if normalize else "d", colorbar=False)
+
+        ax.set_title(f"{model_name} ({'normalized' if normalize else 'raw'})")
+
+    plt.tight_layout()
+    plt.show()
