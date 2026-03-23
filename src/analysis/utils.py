@@ -66,34 +66,63 @@ def get_mean_shap(shap_values, class_idx=None):
     return np.abs(values).mean(axis=0), shap_values.feature_names
 
 
+def prepare_top_with_other(vals, names, max_display):
+    idx = np.argsort(vals)
+
+    # Top (max_display - 1)
+    top_idx = idx[-(max_display - 1) :]
+
+    top_vals = vals[top_idx]
+    top_names = np.array(names)[top_idx]
+
+    # Remaining ("Other")
+    other_val = vals[idx[: -(max_display - 1)]].sum()
+
+    # Combine
+    final_vals = np.insert(top_vals, 0, other_val)
+    final_names = np.insert(top_names, 0, "Other features")
+
+    return final_vals, final_names
+
+
+def sort_features(vals, names):
+    idx = np.argsort(vals)
+    return vals[idx], np.array(names)[idx]
+
+
 def plot_shap_comparison(shap_rf, shap_xgb, shap_lr, max_display=15):
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
     # --- RF ---
     rf_vals, rf_names = get_mean_shap(shap_rf, class_idx=1)
-    rf_idx = np.argsort(rf_vals)[-max_display:]
+    rf_vals, rf_names = prepare_top_with_other(rf_vals, rf_names, max_display)
 
     # print(np.array(rf_names)[rf_idx], rf_vals[rf_idx])
 
-    axes[0].barh(np.array(rf_names)[rf_idx], rf_vals[rf_idx])
+    # axes[0].barh(np.array(rf_names)[rf_idx], rf_vals[rf_idx])
+    axes[0].barh(rf_names, rf_vals)
     axes[0].set_title("Random Forest (SHAP)")
 
     # --- XGB ---
     xgb_vals, xgb_names = get_mean_shap(shap_xgb, class_idx=1)
-    xgb_idx = np.argsort(xgb_vals)[-max_display:]
+    xgb_vals, xgb_names = prepare_top_with_other(xgb_vals, xgb_names, max_display)
+    # xgb_idx = np.argsort(xgb_vals)[-max_display:]
 
     # print(np.array(xgb_names)[xgb_idx], xgb_vals[xgb_idx])
 
-    axes[1].barh(np.array(xgb_names)[xgb_idx], xgb_vals[xgb_idx])
+    # axes[1].barh(np.array(xgb_names)[xgb_idx], xgb_vals[xgb_idx])
+    axes[1].barh(xgb_names, xgb_vals)
     axes[1].set_title("XGBoost (SHAP)")
 
     # --- LR ---
     lr_vals, lr_names = get_mean_shap(shap_lr)
-    lr_idx = np.argsort(lr_vals)[-max_display:]
+    lr_vals, lr_names = prepare_top_with_other(lr_vals, lr_names, max_display)
+    # lr_idx = np.argsort(lr_vals)[-max_display:]
 
     # print(np.array(lr_names)[lr_idx], lr_vals[lr_idx])
 
-    axes[2].barh(np.array(lr_names)[lr_idx], lr_vals[lr_idx])
+    # axes[2].barh(np.array(lr_names)[lr_idx], lr_vals[lr_idx])
+    axes[2].barh(lr_names, lr_vals)
     axes[2].set_title("Logistic Regression (SHAP)")
 
     plt.tight_layout()
