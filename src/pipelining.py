@@ -1,9 +1,14 @@
 import numpy as np
 
-from sklearn.pipeline import Pipeline
+from imblearn.pipeline import Pipeline
+
 from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, PolynomialFeatures
 from sklearn.linear_model import LogisticRegression
+
+from imblearn.over_sampling import SMOTE, ADASYN, RandomOverSampler
+from imblearn.under_sampling import RandomUnderSampler, TomekLinks
+from imblearn.combine import SMOTETomek
 
 from src.preprocessing import (
     ColumnDropper,
@@ -17,6 +22,23 @@ from src.preprocessing import (
 )
 
 from src.preprocessing.mappings import month_map, dow_map
+
+
+# -------------------------------------------------------
+# Sampler factory
+# -------------------------------------------------------
+def get_sampler(sampler_name, random_state=42):
+    samplers = {
+        "smote": SMOTE(random_state=random_state),
+        "adasyn": ADASYN(random_state=random_state),
+        "random_over": RandomOverSampler(random_state=random_state),
+        "random_under": RandomUnderSampler(random_state=random_state),
+        "tomek": TomekLinks(),
+        "smote_tomek": SMOTETomek(random_state=random_state),
+        None: None,
+    }
+    return samplers.get(sampler_name)
+
 
 # -------------------------------------------------------
 # Socio-economic binning configuration
@@ -40,9 +62,9 @@ socioecon_bins = {
 
 
 # -------------------------------------------------------
-# Feature engineering pipeline
+# Feature engineering steps
 # -------------------------------------------------------
-def build_feature_engineering_pipeline(
+def build_feature_engineering_steps(
     drop_cols,
     campaign_prev_subtract_value,
     campaign_prev_cap_value,
@@ -56,24 +78,14 @@ def build_feature_engineering_pipeline(
     steps = [
         ("drop_cols_initial", ColumnDropper(columns=drop_cols)),
         (
-            "campaign_prev",
-            Pipeline(
-                [
-                    (
-                        "subtract_1",
-                        ColumnArithmetic(
-                            column="campaign",
-                            operation="subtract",
-                            value=campaign_prev_subtract_value,
-                        ),
-                    ),
-                    (
-                        "cap_outliers",
-                        OutlierCapper(column="campaign", cap=campaign_prev_cap_value),
-                    ),
-                ]
+            "campaign_subtract",
+            ColumnArithmetic(
+                column="campaign",
+                operation="subtract",
+                value=campaign_prev_subtract_value,
             ),
         ),
+        ("campaign_cap", OutlierCapper(column="campaign", cap=campaign_prev_cap_value)),
     ]
 
     if pdays_transform_mode in ["binary", "group"] and "pdays" not in drop_cols:
@@ -96,7 +108,7 @@ def build_feature_engineering_pipeline(
             [
                 ("month_mapper", MappingTransformer("month", month_map, "month_num")),
                 ("dow_mapper", MappingTransformer("day_of_week", dow_map, "dow_num")),
-                ("drop_cols_month_day", ColumnDropper(["month", "day_of_week"])),
+                ("drop_month_day", ColumnDropper(["month", "day_of_week"])),
             ]
         )
 
@@ -110,9 +122,10 @@ def build_feature_engineering_pipeline(
                 ["≤24", "25-29", "30-39", "40-49", "50-59", "60+"],
             )
         )
+
         steps.extend(
             [
-                ("age_numbin", NumericBinner(column="age", bins=bins, labels=labels)),
+                ("age_bin", NumericBinner(column="age", bins=bins, labels=labels)),
                 ("age_drop", ColumnDropper(columns=["age"])),
             ]
         )
@@ -125,31 +138,29 @@ def build_feature_engineering_pipeline(
 
                 steps.append(
                     (
-                        f"{col}_numbin",
+                        f"{col}_bin",
                         NumericBinner(
-                            column=col, bins=cfg["bins"], labels=cfg["labels"]
+                            column=col,
+                            bins=cfg["bins"],
+                            labels=cfg["labels"],
                         ),
-                    ),
+                    )
                 )
 
-        # drop original soc-eco cols after preprocessing
         steps.append(("soceco_drop", ColumnDropper(columns=soceco_bin_cols)))
 
-    return Pipeline(steps)
+    return steps
 
 
 # -------------------------------------------------------
-# Cyclical encoding pipeline
+# Cyclical steps
 # -------------------------------------------------------
-def build_cyclical_pipeline():
-
-    return Pipeline(
-        [
-            ("month_cyclical", CyclicalEncoder("month_num", 12)),
-            ("dow_cyclical", CyclicalEncoder("dow_num", 5)),
-            ("drop_month_dow_num", ColumnDropper(["month_num", "dow_num"])),
-        ]
-    )
+def build_cyclical_steps():
+    return [
+        ("month_cyclical", CyclicalEncoder("month_num", 12)),
+        ("dow_cyclical", CyclicalEncoder("dow_num", 5)),
+        ("drop_month_dow_num", ColumnDropper(["month_num", "dow_num"])),
+    ]
 
 
 # -------------------------------------------------------
@@ -161,16 +172,12 @@ def build_numeric_pipeline(scale_mode, poly_degree):
 
     if scale_mode == "standard":
         steps.append(("scaler", StandardScaler()))
-
     elif scale_mode == "normalize":
         steps.append(("scaler", MinMaxScaler()))
 
     if poly_degree > 1:
         steps.append(
-            (
-                "poly_features",
-                PolynomialFeatures(degree=poly_degree, include_bias=False),
-            )
+            ("poly", PolynomialFeatures(degree=poly_degree, include_bias=False))
         )
 
     if steps:
@@ -191,7 +198,7 @@ def build_preprocessor(cat_encoder, num_encoder):
                 cat_encoder,
                 make_column_selector(dtype_include=["object", "category"]),
             ),
-            ("numeric", num_encoder, make_column_selector(dtype_include="number")),
+            ("num", num_encoder, make_column_selector(dtype_include="number")),
         ]
     )
 
@@ -212,6 +219,7 @@ def build_pipeline(
     combine_cats=None,
     scale_mode="standard",
     poly_degree=1,
+    sampler_name=None,
     model=LogisticRegression(random_state=42),
 ):
     """
@@ -341,19 +349,24 @@ def build_pipeline(
     if combine_cats is None:
         combine_cats = {"default": {"risk": ["unknown", "yes"]}}
 
-    # --------------------------------------------------
-    # Build pipeline components
-    # --------------------------------------------------
-    feature_engineering = build_feature_engineering_pipeline(
-        drop_cols,
-        campaign_prev_subtract_value,
-        campaign_prev_cap_value,
-        pdays_transform_mode,
-        pdays_transform_recent_days,
-        calendar_cols_mode,
-        age_bin_mode,
-        soceco_bin_cols,
+    steps = []
+
+    # flatten feature engineering
+    steps.extend(
+        build_feature_engineering_steps(
+            drop_cols,
+            campaign_prev_subtract_value,
+            campaign_prev_cap_value,
+            pdays_transform_mode,
+            pdays_transform_recent_days,
+            calendar_cols_mode,
+            age_bin_mode,
+            soceco_bin_cols,
+        )
     )
+
+    if calendar_cols_mode == "cyclical":
+        steps.extend(build_cyclical_steps())
 
     cat_encoder = AutoCategoricalEncoder(
         drop_categories=drop_cats, combine_categories=combine_cats
@@ -363,14 +376,12 @@ def build_pipeline(
 
     preprocessor = build_preprocessor(cat_encoder, num_encoder)
 
-    # --------------------------------------------------
-    # Final pipeline
-    # --------------------------------------------------
-    steps = [("feature_engineering", feature_engineering)]
+    steps.append(("preprocessing", preprocessor))
 
-    if calendar_cols_mode == "cyclical":
-        steps.append(("cyclical_encoding", build_cyclical_pipeline()))
+    sampler = get_sampler(sampler_name)
+    if sampler is not None:
+        steps.append(("resampling", sampler))
 
-    steps.extend([("preprocessing", preprocessor), ("classifier", model)])
+    steps.append(("classifier", model))
 
     return Pipeline(steps)
